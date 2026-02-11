@@ -1,0 +1,24 @@
+{
+  "name": "hakimovdev",
+  "version": "1.0.0",
+  "description": "For get a ready-made codes",
+  "keywords": [
+    "wds",
+    "hakimov"
+  ],
+  "homepage": "https://github.com/hakimovdev1/hakimov-npm#readme",
+  "bugs": {
+    "url": "https://github.com/hakimovdev1/hakimov-npm/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hakimovdev1/hakimov-npm.git"
+  },
+  "license": "ISC",
+  "author": "HAKIMOV",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
