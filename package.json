@@ -1,6 +1,6 @@
 {
   "name": "hakimovdev",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "For get a ready-made codes",
   "keywords": [
     "wds",
@@ -15,7 +15,7 @@
     "url": "git+https://github.com/hakimovdev1/hakimov-npm.git"
   },
   "license": "ISC",
-  "author": "HAKIMOV",
+  "author": "hakimovdev1",
   "type": "commonjs",
   "main": "index.js",
   "scripts": {

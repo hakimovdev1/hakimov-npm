@@ -1,19 +1,19 @@
 # hakimovdev
 
-Utilities for Telegram bots. Currently includes a helper that checks whether a user is subscribed to required channels and builds an inline keyboard for subscription prompts.
+Telegram botlar uchun yordamchi utilitlar. Hozircha foydalanuvchi kerakli kanallarga obuna bo'lganini tekshiradigan va obuna bo'lish uchun inline klaviatura tuzadigan funksiya mavjud.
 
-## Install
+## Ornatish
 
 ```bash
 npm install hakimovdev
 ```
 
-## Usage
+## Foydalanish
 
 ```js
 const { notSubscribedChannels } = require('hakimovdev');
 
-// Example inside a message handler
+// Xabar ishlovchisi ichidagi misol
 const keyboard = await notSubscribedChannels(
 	bot,
 	msg.from.id,
@@ -24,7 +24,7 @@ const keyboard = await notSubscribedChannels(
 if (keyboard) {
 	await bot.sendMessage(
 		msg.chat.id,
-		"Please subscribe to the required channels:",
+		"Iltimos, kerakli kanallarga obuna bo'ling:",
 		{
 			reply_markup: {
 				inline_keyboard: keyboard
@@ -34,31 +34,31 @@ if (keyboard) {
 	return;
 }
 
-// Continue normal flow when the user is subscribed to all channels
+// Foydalanuvchi barcha kanallarga obuna bo'lganida asosiy oqimni davom ettiring
 ```
 
 ## API
 
 ### notSubscribedChannels(bot, userId, channelIds, callbackData?)
 
-Checks a user's membership across a list of channels and returns an inline keyboard for channels that the user has not joined. When all channels are joined, it returns `null`.
+Keltirilgan kanal ro'yxati bo'yicha foydalanuvchi obunasini tekshiradi. Agar kamida bitta kanalga obuna bo'lmasa, inline klaviatura qaytaradi. Agar hammasiga obuna bo'lsa, `null` qaytaradi.
 
-#### Parameters
+#### Parametrlar
 
-- `bot` (object, required): Telegram bot instance. Must implement `getChatMember`, `getChat`, and optionally `createChatInviteLink`.
-- `userId` (number, required): Telegram user ID.
-- `channelIds` (Array<number|string>, required): List of channel IDs. Values can be with or without the `-100` prefix.
-- `callbackData` (string, optional): Callback data for the final "check" button. Default is `check_sub`.
+- `bot` (object, required): Telegram bot instance. `getChatMember`, `getChat`, va ixtiyoriy `createChatInviteLink` metodlariga ega bo'lishi kerak.
+- `userId` (number, required): Telegram foydalanuvchi ID.
+- `channelIds` (Array<number|string>, required): Kanal ID ro'yxati. `-100` prefiksi bilan yoki prefikssiz bo'lishi mumkin.
+- `callbackData` (string, optional): Oxirgi "tekshirish" tugmasi uchun `callback_data`. Standart qiymat `check_sub`.
 
-#### Returns
+#### Qaytadi
 
-- `Array` inline keyboard rows when at least one channel is missing.
-- `null` when the user is subscribed to all channels.
+- `Array` inline klaviatura qatorlari (agar kamida bitta kanal yo'q bo'lsa).
+- `null` (agar foydalanuvchi barcha kanallarga obuna bo'lsa).
 
-## Behavior Notes
+## Xulq-atvor eslatmalari
 
-- If `getChatMember` fails for a channel, the user is treated as not subscribed.
-- The helper tries to build a join link using `username`, `invite_link`, or by creating a new invite link if permitted.
+- Agar `getChatMember` kanal bo'yicha xato qaytarsa, foydalanuvchi obuna emas deb olinadi.
+- Funksiya kanalga kirish linkini `username`, `invite_link`, yoki ruxsat bo'lsa yangi invite link yaratish orqali topishga harakat qiladi.
 
 ## Repository
 
