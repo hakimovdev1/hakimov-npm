@@ -1,5 +1,5 @@
 {
-  "name": "hakimov",
+  "name": "@hakimov/tgbot",
   "version": "1.0.1",
   "description": "You can do what long line of codes with one line of code with this package",
   "keywords": [
@@ -13,9 +13,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hakimovdev1/hakimov-npm.git"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "license": "ISC",
   "author": "hakimovdev1",
