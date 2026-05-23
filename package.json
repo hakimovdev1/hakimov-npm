@@ -1,6 +1,6 @@
 {
   "name": "hakimov",
-  "version": "1.0.4",
+  "version": "1.0.3",
   "description": "You can do what long line of codes with one line of code with this package",
   "keywords": [
     "wds",
@@ -20,8 +20,5 @@
   "license": "ISC",
   "author": "hakimovdev1",
   "type": "commonjs",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  }
+  "main": "index.js"
 }

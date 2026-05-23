@@ -47,7 +47,7 @@ Keltirilgan kanal ro'yxati bo'yicha foydalanuvchi obunasini tekshiradi. Agar kam
 
 - `bot` (object, required): Telegram bot instance. `getChatMember`, `getChat`, va ixtiyoriy `createChatInviteLink` metodlariga ega bo'lishi kerak.
 - `userId` (number, required): Telegram foydalanuvchi ID.
-- `channelIds` (Array<number|string>, required): Kanal ID ro'yxati. `-100` prefiksi bilan yoki prefikssiz bo'lishi mumkin.
+- `channelIds` (Array<number|string> | number | string, required): Kanal ID yoki ID'lar ro'yxati. `-100` prefiksi bilan yoki prefikssiz bo'lishi mumkin. Bitta ID yoki Array ko'rinishida berilishi mumkin.
 - `callbackData` (string, optional): Oxirgi "tekshirish" tugmasi uchun `callback_data`. Standart qiymat `check_sub`.
 
 #### Qaytadi
