@@ -1,70 +1,83 @@
 # hakimov
 
-Telegram botlar uchun yordamchi utilitlar. Hozircha foydalanuvchi kerakli kanallarga obuna bo'lganini tekshiradigan va obuna bo'lish uchun inline klaviatura tuzadigan funksiya mavjud.
+[![npm version](https://img.shields.io/npm/v/hakimov.svg)](https://www.npmjs.com/package/hakimov)
+[![license](https://img.shields.io/npm/l/hakimov.svg)](https://github.com/hakimovdev1/hakimov-npm/blob/main/LICENSE)
 
-## Ornatish
+> Do what takes long lines of code with one line of code.
+
+A zero-config CLI that turns a fresh NestJS project into a production-ready setup — Swagger, TypeORM (PostgreSQL), ConfigModule, and all the dependencies you need — with a single command.
+
+## Quick start
+
+Inside your NestJS project folder:
 
 ```bash
-npm install hakimov
+npx hakimov nest-init
 ```
 
-## Foydalanish
+That's it. No installation required.
 
-```js
-const { notSubscribedChannels } = require('hakimov');
+## What `nest-init` does
 
-// Xabar ishlovchisi ichidagi misol
-const keyboard = await notSubscribedChannels(
-	bot,
-	msg.from.id,
-	["-1001234567890", "-1009876543210"],
-	"check_sub"
-);
+1. **Installs all dependencies** you'd otherwise add one by one:
 
-if (keyboard) {
-	await bot.sendMessage(
-		msg.chat.id,
-		"Iltimos, kerakli kanallarga obuna bo'ling:",
-		{
-			reply_markup: {
-				inline_keyboard: keyboard
-			}
-		}
-	);
-	return;
-}
+   | Dependencies | Dev dependencies |
+   | --- | --- |
+   | `@nestjs/common`, `@nestjs/core`, `@nestjs/platform-express` | `@nestjs/cli`, `@nestjs/schematics`, `@nestjs/testing` |
+   | `@nestjs/swagger`, `@nestjs/typeorm`, `@nestjs/config` | `typescript`, `ts-node`, `ts-jest`, `ts-loader` |
+   | `typeorm`, `pg` | `jest`, `supertest` + type packages |
+   | `bcrypt`, `helmet`, `compression`, `cookie-parser` | `eslint`, `prettier` + configs/plugins |
+   | `class-validator`, `class-transformer` | `@types/node`, `@types/express`, `@types/multer`, … |
+   | `dotenv`, `rxjs`, `uuid`, `mime-types`, `reflect-metadata` | |
 
-// Foydalanuvchi barcha kanallarga obuna bo'lganida asosiy oqimni davom ettiring
+2. **Generates `src/main.ts`** with Swagger already wired up — docs served at `/api`.
+
+3. **Generates `src/app.module.ts`** with TypeORM (PostgreSQL) and a global ConfigModule, all driven by environment variables.
+
+4. **Creates a `.env` file** (only if one doesn't exist — yours is never overwritten):
+
+   ```env
+   PORT=4040
+
+   DB_HOST=localhost
+   DB_PORT=5432
+   DB_USERNAME=postgres
+   DB_PASSWORD=postgres
+   DB_DATABASE=<your-project-name>
+   ```
+
+Then just review your `.env` and run:
+
+```bash
+npm run start:dev
 ```
 
-## API
+Swagger UI will be available at `http://localhost:4040/api`.
 
-### notSubscribedChannels(bot, userId, channelIds, callbackData?)
+## Package manager friendly
 
-Keltirilgan kanal ro'yxati bo'yicha foydalanuvchi obunasini tekshiradi. Agar kamida bitta kanalga obuna bo'lmasa, inline klaviatura qaytaradi. Agar hammasiga obuna bo'lsa, `null` qaytaradi.
+The CLI auto-detects your package manager — **pnpm**, **yarn**, **bun**, or **npm** — by checking lockfiles, how it was launched (`npx`/`pnpx`/`bunx`), and what's installed on your system.
 
-#### Parametrlar
+It also handles the pnpm v10+ `ERR_PNPM_IGNORED_BUILDS` issue automatically: blocked build scripts (e.g. `bcrypt`, `@nestjs/core`) are allowed in `pnpm-workspace.yaml` and the install is retried — no manual `pnpm approve-builds` needed.
 
-- `bot` (object, required): Telegram bot instance. `getChatMember`, `getChat`, va ixtiyoriy `createChatInviteLink` metodlariga ega bo'lishi kerak.
-- `userId` (number, required): Telegram foydalanuvchi ID.
-- `channelIds` (Array<number|string> | number | string, required): Kanal ID yoki ID'lar ro'yxati. `-100` prefiksi bilan yoki prefikssiz bo'lishi mumkin. Bitta ID yoki Array ko'rinishida berilishi mumkin.
-- `callbackData` (string, optional): Oxirgi "tekshirish" tugmasi uchun `callback_data`. Standart qiymat `check_sub`.
+## Commands
 
-#### Qaytadi
+| Command | Description |
+| --- | --- |
+| `npx hakimov nest-init` | Set up a NestJS project: dependencies, Swagger, TypeORM, ConfigModule, `.env` |
+| `npx hakimov help` | Show help |
 
-- `Array` inline klaviatura qatorlari (agar kamida bitta kanal yo'q bo'lsa).
-- `null` (agar foydalanuvchi barcha kanallarga obuna bo'lsa).
+## Requirements
 
-## Xulq-atvor eslatmalari
+- Node.js with `npx`
+- An existing NestJS project (a folder with a `package.json` — e.g. created via `nest new`)
+- PostgreSQL for the generated TypeORM config (you can change the driver in `src/app.module.ts`)
 
-- Agar `getChatMember` kanal bo'yicha xato qaytarsa, foydalanuvchi obuna emas deb olinadi.
-- Funksiya kanalga kirish linkini `username`, `invite_link`, yoki ruxsat bo'lsa yangi invite link yaratish orqali topishga harakat qiladi.
+## Links
 
-## Repository
-
-- Issues: https://github.com/hakimovdev1/hakimov-npm/issues
-- Source: https://github.com/hakimovdev1/hakimov-npm
+- [Source](https://github.com/hakimovdev1/hakimov-npm)
+- [Issues](https://github.com/hakimovdev1/hakimov-npm/issues)
 
 ## License
 
-ISC
+ISC © [hakimovdev1](https://github.com/hakimovdev1)
