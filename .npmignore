@@ -1,0 +1,10 @@
+# Ignore test files
+tests/
+coverage/
+
+# Ignore uncompiled source code
+src/
+config.local.js
+
+# Ignore specific bot settings
+.claude/
