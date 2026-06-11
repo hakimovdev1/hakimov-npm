@@ -1,155 +1,414 @@
-"use strict";
-
-module.exports = { notSubscribedChannels };
+#!/usr/bin/env node
 
 /**
- * Telegram userning kanallarga obuna bo‘lganini tekshiradi.
- * Kamida bitta kanalga obuna bo‘lmagan bo‘lsa moslashtirilgan inline keyboard qaytaradi.
+ * hakimov - CLI for simplifying your code setup
  *
- * @param {import("node-telegram-bot-api")} bot
- * @param {number} userId
- * @param {number|string|(number|string)[]} channelIds
- * @param {string|object} [options="check_sub"] - Callback data yoki sozlamalar obyekti
- * @param {string} [options.callbackData="check_sub"] - Tekshirish tugmasi uchun callback_data
- * @param {string} [options.buttonText="➕ {title}"] - Kanal tugmasi matni (`{title}` avtomat almashadi)
- * @param {string} [options.checkText="🔄 Tekshirish"] - Tekshirish tugmasi matni
- * @param {number} [options.columns=1] - Kanallar tugmalari nechta ustunda joylashishi
- *
- * @returns {Promise<import("node-telegram-bot-api").InlineKeyboardButton[][] | null>}
+ * Usage:
+ *   npx hakimov nest-init   - Setup a NestJS project (swagger, typeorm, config)
  */
-async function notSubscribedChannels(
-  bot,
-  userId,
-  channelIds,
-  options = "check_sub"
-) {
-  const idsArray = Array.isArray(channelIds) ? channelIds : [channelIds];
 
-  validateParams(bot, userId, idsArray);
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 
-  // Sozlamalarni standart qiymatlar bilan birlashtirish (Backward compatibility saqlangan)
-  const config = {
-    callbackData: "check_sub",
-    buttonText: "➕ {title}",
-    checkText: "🔄 Tekshirish",
-    columns: 1,
-    ...(typeof options === "string" ? { callbackData: options } : options)
-  };
+const CWD = process.cwd();
 
-  const normalizedIds = normalizeChannelIds(idsArray);
+// ---------- helpers ----------
 
-  const results = await Promise.all(
-    normalizedIds.map((channelId) =>
-      checkChannelSubscription(bot, userId, channelId)
-    )
-  );
+const colors = {
+  reset: '\x1b[0m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  red: '\x1b[31m',
+  cyan: '\x1b[36m',
+  bold: '\x1b[1m',
+};
 
-  // Faqat obuna bo'linmagan va ma'lumotlari muvaffaqiyatli olingan kanallar
-  const unsubscribedChannels = results.filter(Boolean);
-
-  if (!unsubscribedChannels.length) return null;
-
-  // Tugmalarni formatlash
-  const channelButtons = unsubscribedChannels.map((channel) => {
-    const text = config.buttonText.replace("{title}", channel.title);
-    return { text, url: channel.url };
-  });
-
-  // Tugmalarni ustunlar bo'yicha bo'lish (Chunking)
-  const keyboard = chunkArray(channelButtons, config.columns);
-
-  // Oxiriga "Tekshirish" tugmasini alohida qator qilib qo'shish
-  keyboard.push([
-    { text: config.checkText, callback_data: config.callbackData }
-  ]);
-
-  return keyboard;
+function log(msg) {
+  console.log(`${colors.cyan}[hakimov]${colors.reset} ${msg}`);
 }
 
-/* -------------------------------------------------------------------------- */
-/* Helpers                                   */
-/* -------------------------------------------------------------------------- */
+function success(msg) {
+  console.log(`${colors.green}[hakimov] ✔${colors.reset} ${msg}`);
+}
 
-function validateParams(bot, userId, channelIds) {
-  if (!bot || typeof bot.getChatMember !== "function") {
-    throw new Error("notSubscribedChannels: invalid bot instance");
+function warn(msg) {
+  console.log(`${colors.yellow}[hakimov] ⚠${colors.reset} ${msg}`);
+}
+
+function error(msg) {
+  console.error(`${colors.red}[hakimov] ✖${colors.reset} ${msg}`);
+}
+
+function readProjectPackageJson() {
+  const pkgPath = path.join(CWD, 'package.json');
+  if (!fs.existsSync(pkgPath)) {
+    error('package.json topilmadi. Bu buyruqni NestJS project ichida ishlating.');
+    process.exit(1);
   }
-
-  if (!userId || typeof userId !== "number") {
-    throw new Error("notSubscribedChannels: invalid userId");
-  }
-
-  if (!Array.isArray(channelIds) || channelIds.length === 0) {
-    throw new Error("notSubscribedChannels: channelIds must be a valid channel ID or a non-empty array");
-  }
-}
-
-function normalizeChannelIds(channelIds) {
-  return channelIds
-    .map((id) => {
-      const str = String(id).trim();
-      if (!str) return null;
-      return str.startsWith("-100") ? Number(str) : Number(`-100${str}`);
-    })
-    .filter(Number.isFinite);
-}
-
-/**
- * Bitta kanal uchun subscription tekshiradi.
- * Obuna bo‘lmagan bo‘lsa kanal linki va sarlavhasini qaytaradi.
- *
- * @returns {Promise<{url: string, title: string}|null>}
- */
-async function checkChannelSubscription(bot, userId, channelId) {
-  const subscribed = await isUserSubscribed(bot, userId, channelId);
-
-  if (subscribed) return null;
-
-  return await getChannelDetails(bot, channelId);
-}
-
-async function isUserSubscribed(bot, userId, channelId) {
   try {
-    const member = await bot.getChatMember(channelId, userId);
-    return ["member", "administrator", "creator"].includes(member?.status);
+    return JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  } catch (e) {
+    error(`package.json o'qib bo'lmadi: ${e.message}`);
+    process.exit(1);
+  }
+}
+
+function isInstalled(pm) {
+  try {
+    execSync(`${pm} --version`, { stdio: 'ignore' });
+    return true;
   } catch {
     return false;
   }
 }
 
-/**
- * Kanal URL va Title ma'lumotlarini qaytaradi
- */
-async function getChannelDetails(bot, channelId) {
+function detectPackageManager() {
+  // 1. Lockfile bo'yicha aniqlash
+  if (fs.existsSync(path.join(CWD, 'pnpm-lock.yaml'))) return 'pnpm';
+  if (fs.existsSync(path.join(CWD, 'yarn.lock'))) return 'yarn';
+  if (fs.existsSync(path.join(CWD, 'bun.lockb')) || fs.existsSync(path.join(CWD, 'bun.lock'))) return 'bun';
+  if (fs.existsSync(path.join(CWD, 'package-lock.json'))) return 'npm';
+
+  // 2. Qaysi package manager orqali ishga tushirilganini aniqlash (npx/pnpx/bunx)
+  const userAgent = process.env.npm_config_user_agent || '';
+  for (const pm of ['pnpm', 'yarn', 'bun']) {
+    if (userAgent.startsWith(pm)) return pm;
+  }
+
+  // 3. Sistemada o'rnatilganini ishlatish (pnpm afzal)
+  for (const pm of ['pnpm', 'yarn', 'bun']) {
+    if (isInstalled(pm)) return pm;
+  }
+
+  return 'npm';
+}
+
+// pnpm v10+ build scriptlarni avtomatik ishga tushirmaydi (ERR_PNPM_IGNORED_BUILDS).
+// Bu packagelar uchun build scriptlarga ruxsat beriladi.
+const PNPM_ALLOWED_BUILDS = ['@nestjs/core', '@scarf/scarf', 'bcrypt'];
+
+function pnpmMajorVersion() {
   try {
-    const chat = await bot.getChat(channelId);
-    const title = chat?.title || "Kanalga o'tish";
-
-    if (chat?.username) {
-      return { url: `https://t.me/${chat.username}`, title };
-    }
-
-    if (chat?.invite_link) {
-      return { url: chat.invite_link, title };
-    }
-
-    // Agar taklif havolasi bo'lmasa, yangi yaratamiz
-    const link = await bot.createChatInviteLink(channelId);
-    return link?.invite_link ? { url: link.invite_link, title } : null;
-
+    return parseInt(execSync('pnpm --version', { encoding: 'utf8' }).trim().split('.')[0], 10);
   } catch {
-    return null;
+    return 0;
   }
 }
 
-/**
- * Massivni berilgan o'lcham bo'yicha bo'laklarga ajratadi (Ustunlar sxemasi uchun)
- */
-function chunkArray(array, size) {
-  const chunked = [];
-  const validSize = Math.max(1, parseInt(size) || 1);
-  for (let i = 0; i < array.length; i += validSize) {
-    chunked.push(array.slice(i, i + validSize));
+// pnpm versiyasiga qarab build scriptlarga ruxsat beriladi:
+//   v11+  -> pnpm-workspace.yaml: allowBuilds (map)
+//   v10   -> pnpm-workspace.yaml: onlyBuiltDependencies (list)
+//   v9-   -> hech narsa kerak emas (build scriptlar avtomatik ishlaydi)
+function ensurePnpmAllowBuilds(extraPackages = []) {
+  const major = pnpmMajorVersion();
+  if (major < 10) return;
+
+  const wsPath = path.join(CWD, 'pnpm-workspace.yaml');
+  let content = fs.existsSync(wsPath) ? fs.readFileSync(wsPath, 'utf8') : '';
+
+  const section = major >= 11 ? 'allowBuilds' : 'onlyBuiltDependencies';
+  if (!new RegExp(`^${section}:`, 'm').test(content)) {
+    if (content && !content.endsWith('\n')) content += '\n';
+    content += `${section}:\n`;
   }
-  return chunked;
+
+  const allPackages = [...new Set([...PNPM_ALLOWED_BUILDS, ...extraPackages])];
+  for (const pkgName of allPackages) {
+    const escaped = pkgName.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    const entryRe = new RegExp(`^(\\s+)(- )?(['"]?)${escaped}\\3\\s*(:.*)?$`, 'm');
+    const entry = major >= 11 ? `  '${pkgName}': true` : `  - '${pkgName}'`;
+    if (entryRe.test(content)) {
+      content = content.replace(entryRe, entry);
+    } else {
+      content = content.replace(new RegExp(`^${section}:\\s*$`, 'm'), (m) => `${m}\n${entry}`);
+    }
+  }
+
+  fs.writeFileSync(wsPath, content, 'utf8');
+  success(`pnpm-workspace.yaml: ${section} sozlandi.`);
 }
+
+const NEST_DEPENDENCIES = {
+  '@nestjs/common': '^11.0.1',
+  '@nestjs/config': '^4.0.4',
+  '@nestjs/core': '^11.0.1',
+  '@nestjs/platform-express': '^11.0.1',
+  '@nestjs/swagger': '^11.4.4',
+  '@nestjs/typeorm': '^11.0.1',
+  'bcrypt': '^6.0.0',
+  'class-transformer': '^0.5.1',
+  'class-validator': '^0.15.1',
+  'compression': '^1.8.1',
+  'cookie-parser': '^1.4.7',
+  'dotenv': '^17.4.2',
+  'helmet': '^8.2.0',
+  'mime-types': '^3.0.2',
+  'pg': '^8.21.0',
+  'reflect-metadata': '^0.2.2',
+  'rxjs': '^7.8.2',
+  'typeorm': '^1.0.0',
+  'uuid': '^14.0.0',
+};
+
+const NEST_DEV_DEPENDENCIES = {
+  '@eslint/eslintrc': '^3.2.0',
+  '@eslint/js': '^9.18.0',
+  '@nestjs/cli': '^11.0.0',
+  '@nestjs/schematics': '^11.0.0',
+  '@nestjs/testing': '^11.0.1',
+  '@types/bcrypt': '^6.0.0',
+  '@types/compression': '^1.8.1',
+  '@types/cookie-parser': '^1.4.10',
+  '@types/express': '^5.0.0',
+  '@types/jest': '^30.0.0',
+  '@types/mime-types': '^3.0.1',
+  '@types/multer': '^2.1.0',
+  '@types/node': '^24.13.1',
+  '@types/supertest': '^7.0.0',
+  'eslint': '^9.39.4',
+  'eslint-config-prettier': '^10.1.8',
+  'eslint-plugin-prettier': '^5.5.6',
+  'globals': '^17.0.0',
+  'jest': '^30.0.0',
+  'prettier': '^3.8.4',
+  'source-map-support': '^0.5.21',
+  'supertest': '^7.0.0',
+  'ts-jest': '^29.2.5',
+  'ts-loader': '^9.5.2',
+  'ts-node': '^10.9.2',
+  'tsconfig-paths': '^4.2.0',
+  'typescript': '^5.7.3',
+  'typescript-eslint': '^8.20.0',
+};
+
+function installPackages(pkg) {
+  const pm = detectPackageManager();
+
+  pkg.dependencies = { ...pkg.dependencies, ...NEST_DEPENDENCIES };
+  pkg.devDependencies = { ...pkg.devDependencies, ...NEST_DEV_DEPENDENCIES };
+
+  if (pm === 'pnpm') {
+    ensurePnpmAllowBuilds();
+  }
+
+  fs.writeFileSync(
+    path.join(CWD, 'package.json'),
+    JSON.stringify(pkg, null, 2) + '\n',
+    'utf8'
+  );
+  success('package.json ga dependencies yozildi.');
+
+  log(`Package manager: ${colors.bold}${pm}${colors.reset}`);
+  log("Packagelar o'rnatilmoqda, biroz kuting...");
+
+  if (pm === 'pnpm') {
+    installWithPnpm();
+    return;
+  }
+
+  try {
+    execSync(`${pm} install`, { cwd: CWD, stdio: 'inherit' });
+    success("Barcha packagelar o'rnatildi.");
+  } catch (e) {
+    warn("Packagelarni o'rnatishda xatolik yuz berdi, lekin setup davom etadi.");
+    warn(`Keyinroq qo'lda o'rnating: ${colors.bold}${pm} install${colors.reset}`);
+  }
+}
+
+// pnpm install ni qaytadan (output yashirin holda) ishga tushirib,
+// ERR_PNPM_IGNORED_BUILDS dagi package nomlarini ajratib oladi.
+// [] -> install muvaffaqiyatli, null -> boshqa turdagi xatolik
+function findIgnoredBuilds() {
+  try {
+    execSync('pnpm install', { cwd: CWD, stdio: 'pipe', encoding: 'utf8' });
+    return [];
+  } catch (e) {
+    const output = `${e.stdout || ''}\n${e.stderr || ''}`;
+    const match = output.match(/Ignored build scripts:\s*([^\n]+)/);
+    if (!match) return null;
+    return match[1]
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      // "unrs-resolver@1.12.2" -> "unrs-resolver", "@scarf/scarf@1.4.0" -> "@scarf/scarf"
+      .map((s) => (s.lastIndexOf('@') > 0 ? s.slice(0, s.lastIndexOf('@')) : s));
+  }
+}
+
+const MAX_INSTALL_ATTEMPTS = 3;
+
+function installWithPnpm() {
+  for (let attempt = 1; attempt <= MAX_INSTALL_ATTEMPTS; attempt++) {
+    try {
+      execSync('pnpm install', { cwd: CWD, stdio: 'inherit' });
+      success("Barcha packagelar o'rnatildi.");
+      return;
+    } catch (e) {
+      const ignored = findIgnoredBuilds();
+
+      if (ignored && ignored.length === 0) {
+        // Qayta urinishda o'z-o'zidan muvaffaqiyatli bo'ldi
+        success("Barcha packagelar o'rnatildi.");
+        return;
+      }
+
+      if (!ignored || attempt === MAX_INSTALL_ATTEMPTS) break;
+
+      warn(`Build scriptlari bloklangan packagelar: ${colors.bold}${ignored.join(', ')}${colors.reset}`);
+      log('pnpm-workspace.yaml ga ruxsat yozilib, install qayta ishga tushirilmoqda...');
+      ensurePnpmAllowBuilds(ignored);
+    }
+  }
+
+  warn("Packagelarni o'rnatishda xatolik yuz berdi, lekin setup davom etadi.");
+  warn(`Keyinroq qo'lda o'rnating: ${colors.bold}pnpm install${colors.reset}`);
+}
+
+function writeFileSafe(relativePath, content) {
+  const fullPath = path.join(CWD, relativePath);
+  const dir = path.dirname(fullPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(fullPath, content, 'utf8');
+  success(`Yozildi: ${relativePath}`);
+}
+
+function capitalize(str) {
+  return str ? str.charAt(0).toUpperCase() + str.slice(1) : str;
+}
+
+// ---------- nest-init ----------
+
+function nestInit() {
+  const pkg = readProjectPackageJson();
+  const projectName = pkg.name || 'app';
+  const title = capitalize(projectName);
+
+  log(`Project: ${colors.bold}${projectName}${colors.reset}`);
+
+  // 1. Kerakli packagelarni o'rnatish
+  installPackages(pkg);
+
+  // 2. src/main.ts
+  const mainTs = `import { NestFactory } from '@nestjs/core';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  const config = new DocumentBuilder()
+    .setTitle('${title} example')
+    .setDescription('The ${projectName} API description')
+    .setVersion('1.0')
+    .addTag('${projectName}')
+    .build();
+  const documentFactory = () => SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api', app, documentFactory);
+
+  await app.listen(process.env.PORT ?? 4040);
+}
+bootstrap();
+`;
+
+  // 3. src/app.module.ts
+  const appModuleTs = `import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule } from '@nestjs/config';
+
+@Module({
+  imports: [
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      database: process.env.DB_DATABASE,
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT),
+      username: process.env.DB_USERNAME,
+      password: process.env.DB_PASSWORD,
+      autoLoadEntities: true,
+      synchronize: true
+    }),
+    ConfigModule.forRoot({
+      envFilePath: '.env',
+      isGlobal: true
+    })
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule { }
+`;
+
+  writeFileSafe(path.join('src', 'main.ts'), mainTs);
+  writeFileSafe(path.join('src', 'app.module.ts'), appModuleTs);
+
+  // 4. .env fayli (mavjud bo'lmasa yaratiladi)
+  const envPath = path.join(CWD, '.env');
+  if (!fs.existsSync(envPath)) {
+    const envContent = `PORT=4040
+
+DB_HOST=localhost
+DB_PORT=5432
+DB_USERNAME=postgres
+DB_PASSWORD=postgres
+DB_DATABASE=${projectName}
+`;
+    fs.writeFileSync(envPath, envContent, 'utf8');
+    success('Yozildi: .env');
+  } else {
+    warn(".env allaqachon mavjud, o'zgartirilmadi.");
+  }
+
+  console.log('');
+  success(`${colors.bold}nest-init muvaffaqiyatli yakunlandi!${colors.reset}`);
+  log(".env faylida database sozlamalarini tekshirishni unutmang.");
+}
+
+// ---------- help ----------
+
+function showHelp() {
+  console.log(`
+${colors.bold}hakimov${colors.reset} - kodlarni osonlashtirish uchun CLI
+
+${colors.bold}Foydalanish:${colors.reset}
+  npx hakimov <buyruq>
+
+${colors.bold}Buyruqlar:${colors.reset}
+  nest-init   NestJS project'ni sozlaydi:
+              - Barcha kerakli dependencies va devDependencies'ni o'rnatadi
+                (nestjs, swagger, typeorm, pg, bcrypt, helmet, eslint, jest va h.k.)
+              - src/main.ts ga Swagger sozlamalarini yozadi
+              - src/app.module.ts ga TypeORM + ConfigModule sozlamalarini yozadi
+              - .env fayl yaratadi (mavjud bo'lmasa)
+
+  help        Ushbu yordam xabarini ko'rsatadi
+`);
+}
+
+// ---------- entrypoint ----------
+
+function main() {
+  const command = process.argv[2];
+
+  switch (command) {
+    case 'nest-init':
+      nestInit();
+      break;
+    case 'help':
+    case '--help':
+    case '-h':
+    case undefined:
+      showHelp();
+      break;
+    default:
+      error(`Noma'lum buyruq: "${command}"`);
+      showHelp();
+      process.exit(1);
+  }
+}
+
+main();

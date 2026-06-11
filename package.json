@@ -20,5 +20,8 @@
   "license": "ISC",
   "author": "hakimovdev1",
   "type": "commonjs",
-  "main": "index.js"
+  "main": "index.js",
+  "bin": {
+    "hakimov": "./index.js"
+  }
 }
