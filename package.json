@@ -1,10 +1,13 @@
 {
   "name": "hakimov",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "You can do what long line of codes with one line of code with this package",
   "keywords": [
     "wds",
-    "hakimov"
+    "hakimov",
+    "nest init",
+    "nestjs instalization",
+    "init nestjs"
   ],
   "homepage": "https://github.com/hakimovdev1/hakimov-npm#readme",
   "bugs": {

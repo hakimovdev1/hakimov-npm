@@ -34,7 +34,9 @@ That's it. No installation required.
 
 3. **Generates `src/app.module.ts`** with TypeORM (PostgreSQL) and a global ConfigModule, all driven by environment variables.
 
-4. **Creates a `.env` file** (only if one doesn't exist — yours is never overwritten):
+4. **Sets up TypeScript for IntelliSense** — writes a `tsconfig.json` if one is missing, and repairs an existing one so editor autocomplete works for decorators like `@Column`, `@IsString`, `@Module`. Specifically it switches `module`/`moduleResolution` away from `nodenext`/`node16` (which break type resolution for typeorm and `@nestjs/*`) to `commonjs`/`node`, drops `resolvePackageJsonExports`, and ensures `experimentalDecorators` + `emitDecoratorMetadata` are enabled. Your other compiler options are preserved.
+
+5. **Creates a `.env` file** (only if one doesn't exist — yours is never overwritten):
 
    ```env
    PORT=4040

@@ -187,6 +187,8 @@ function installPackages(pkg) {
 
   pkg.dependencies = { ...pkg.dependencies, ...NEST_DEPENDENCIES };
   pkg.devDependencies = { ...pkg.devDependencies, ...NEST_DEV_DEPENDENCIES };
+  // Mavjud scriptlarni ustun qo'yamiz, faqat yo'qlarini qo'shamiz.
+  pkg.scripts = { ...NEST_SCRIPTS, ...pkg.scripts };
 
   if (pm === 'pnpm') {
     ensurePnpmAllowBuilds();
@@ -212,6 +214,7 @@ function installPackages(pkg) {
     success("Barcha packagelar o'rnatildi.");
   } catch (e) {
     warn("Packagelarni o'rnatishda xatolik yuz berdi, lekin setup davom etadi.");
+    error(`Install xatosi: ${e.message}`);
     warn(`Keyinroq qo'lda o'rnating: ${colors.bold}${pm} install${colors.reset}`);
   }
 }
@@ -239,12 +242,14 @@ function findIgnoredBuilds() {
 const MAX_INSTALL_ATTEMPTS = 3;
 
 function installWithPnpm() {
+  let lastError = null;
   for (let attempt = 1; attempt <= MAX_INSTALL_ATTEMPTS; attempt++) {
     try {
       execSync('pnpm install', { cwd: CWD, stdio: 'inherit' });
       success("Barcha packagelar o'rnatildi.");
       return;
     } catch (e) {
+      lastError = e;
       const ignored = findIgnoredBuilds();
 
       if (ignored && ignored.length === 0) {
@@ -262,6 +267,7 @@ function installWithPnpm() {
   }
 
   warn("Packagelarni o'rnatishda xatolik yuz berdi, lekin setup davom etadi.");
+  if (lastError) error(`Install xatosi: ${lastError.message}`);
   warn(`Keyinroq qo'lda o'rnating: ${colors.bold}pnpm install${colors.reset}`);
 }
 
@@ -275,9 +281,170 @@ function writeFileSafe(relativePath, content) {
   success(`Yozildi: ${relativePath}`);
 }
 
+// Faqat fayl mavjud bo'lmaganda yozadi (mavjud konfiguratsiyani buzmaydi).
+function writeFileIfMissing(relativePath, content) {
+  const fullPath = path.join(CWD, relativePath);
+  if (fs.existsSync(fullPath)) {
+    warn(`${relativePath} allaqachon mavjud, o'zgartirilmadi.`);
+    return;
+  }
+  writeFileSafe(relativePath, content);
+}
+
 function capitalize(str) {
   return str ? str.charAt(0).toUpperCase() + str.slice(1) : str;
 }
+
+// IntelliSense / dekoratorlar (@IsString, @Module, ...) ishlashi uchun
+// TypeScript loyiha fayllarini yaratadi. experimentalDecorators va
+// emitDecoratorMetadata yoqilmaguncha class-validator/nest dekoratorlari
+// editorda autocomplete bo'lmaydi.
+function writeTsProjectFiles() {
+  const tsconfig = `{
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "ES2023",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "incremental": true,
+    "skipLibCheck": true,
+    "strictNullChecks": true,
+    "forceConsistentCasingInFileNames": true,
+    "noImplicitAny": false,
+    "strictBindCallApply": false,
+    "noFallthroughCasesInSwitch": false
+  }
+}
+`;
+
+  const tsconfigBuild = `{
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+}
+`;
+
+  const nestCli = `{
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "deleteOutDir": true
+  }
+}
+`;
+
+  // tsconfig.json yo'q bo'lsa standart commonjs versiyani yozamiz, mavjud
+  // bo'lsa IntelliSense'ni buzadigan sozlamalarni (nodenext) tuzatamiz.
+  const tsconfigPath = path.join(CWD, 'tsconfig.json');
+  if (fs.existsSync(tsconfigPath)) {
+    fixExistingTsconfig(tsconfigPath);
+  } else {
+    writeFileSafe('tsconfig.json', tsconfig);
+  }
+
+  writeFileIfMissing('tsconfig.build.json', tsconfigBuild);
+  writeFileIfMissing('nest-cli.json', nestCli);
+}
+
+// Mavjud tsconfig.json'ni IntelliSense uchun tuzatadi:
+//   - module/moduleResolution: nodenext|node16 -> commonjs / node
+//   - resolvePackageJsonExports olib tashlanadi
+//   - experimentalDecorators / emitDecoratorMetadata yo'q bo'lsa qo'shiladi
+// Boshqa barcha sozlamalar saqlanadi. Faqat o'zgarish bo'lsa qayta yoziladi.
+function fixExistingTsconfig(tsconfigPath) {
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(tsconfigPath, 'utf8'));
+  } catch (e) {
+    warn(`tsconfig.json o'qib bo'lmadi (JSON xatosi): ${e.message}`);
+    warn('IntelliSense uchun module=commonjs, moduleResolution=node va dekorator flaglarini qo\'lda tekshiring.');
+    return;
+  }
+
+  const co = raw.compilerOptions || (raw.compilerOptions = {});
+  const changes = [];
+
+  const isNodeNext = (v) => typeof v === 'string' && /^(nodenext|node16)$/i.test(v.trim());
+
+  if (isNodeNext(co.module)) {
+    co.module = 'commonjs';
+    changes.push('module → commonjs');
+  }
+  if (isNodeNext(co.moduleResolution)) {
+    co.moduleResolution = 'node';
+    changes.push('moduleResolution → node');
+  }
+  if ('resolvePackageJsonExports' in co) {
+    delete co.resolvePackageJsonExports;
+    changes.push('resolvePackageJsonExports olib tashlandi');
+  }
+  if (co.experimentalDecorators !== true) {
+    co.experimentalDecorators = true;
+    changes.push('experimentalDecorators → true');
+  }
+  if (co.emitDecoratorMetadata !== true) {
+    co.emitDecoratorMetadata = true;
+    changes.push('emitDecoratorMetadata → true');
+  }
+
+  if (changes.length === 0) {
+    success('tsconfig.json allaqachon to\'g\'ri sozlangan.');
+    return;
+  }
+
+  fs.writeFileSync(tsconfigPath, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+  success(`tsconfig.json IntelliSense uchun tuzatildi (${changes.join(', ')}).`);
+}
+
+// app.module.ts AppController va AppService'ni import qiladi — ular
+// bo'lmasa loyiha kompilyatsiya bo'lmaydi va IntelliSense ishlamaydi.
+function writeAppFiles() {
+  const appControllerTs = `import { Controller, Get } from '@nestjs/common';
+import { AppService } from './app.service';
+
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
+
+  @Get()
+  getHello(): string {
+    return this.appService.getHello();
+  }
+}
+`;
+
+  const appServiceTs = `import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class AppService {
+  getHello(): string {
+    return 'Hello World!';
+  }
+}
+`;
+
+  writeFileIfMissing(path.join('src', 'app.controller.ts'), appControllerTs);
+  writeFileIfMissing(path.join('src', 'app.service.ts'), appServiceTs);
+}
+
+const NEST_SCRIPTS = {
+  build: 'nest build',
+  format: 'prettier --write "src/**/*.ts" "test/**/*.ts"',
+  start: 'nest start',
+  'start:dev': 'nest start --watch',
+  'start:debug': 'nest start --debug --watch',
+  'start:prod': 'node dist/main',
+  lint: 'eslint "{src,apps,libs,test}/**/*.ts" --fix',
+  test: 'jest',
+  'test:watch': 'jest --watch',
+  'test:cov': 'jest --coverage',
+};
 
 // ---------- nest-init ----------
 
@@ -345,6 +512,11 @@ export class AppModule { }
 
   writeFileSafe(path.join('src', 'main.ts'), mainTs);
   writeFileSafe(path.join('src', 'app.module.ts'), appModuleTs);
+
+  // TypeScript loyiha konfiguratsiyasi va AppController/AppService — bularsiz
+  // IntelliSense (masalan, class-validator @IsString) ishlamaydi.
+  writeTsProjectFiles();
+  writeAppFiles();
 
   // 4. .env fayli (mavjud bo'lmasa yaratiladi)
   const envPath = path.join(CWD, '.env');
