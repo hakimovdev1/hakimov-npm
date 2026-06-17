@@ -10,6 +10,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 
 const CWD = process.cwd();
 
@@ -215,6 +216,7 @@ function installPackages(pkg) {
   } catch (e) {
     warn("Packagelarni o'rnatishda xatolik yuz berdi, lekin setup davom etadi.");
     error(`Install xatosi: ${e.message}`);
+    if (e.stderr) error(`stderr: ${e.stderr.toString().trim()}`);
     warn(`Keyinroq qo'lda o'rnating: ${colors.bold}${pm} install${colors.reset}`);
   }
 }
@@ -267,7 +269,10 @@ function installWithPnpm() {
   }
 
   warn("Packagelarni o'rnatishda xatolik yuz berdi, lekin setup davom etadi.");
-  if (lastError) error(`Install xatosi: ${lastError.message}`);
+  if (lastError) {
+    error(`Install xatosi: ${lastError.message}`);
+    if (lastError.stderr) error(`stderr: ${lastError.stderr.toString().trim()}`);
+  }
   warn(`Keyinroq qo'lda o'rnating: ${colors.bold}pnpm install${colors.reset}`);
 }
 
@@ -561,9 +566,126 @@ ${colors.bold}Buyruqlar:${colors.reset}
 `);
 }
 
+// ---------- self-update ----------
+//
+// hakimov har ishga tushganda o'zining eng yangi npm versiyasiga yangilanib,
+// darhol o'sha versiya bilan davom etadi. Sabab: foydalanuvchidagi lokal/npx
+// versiya eskirgan bo'lishi mumkin (masalan 1.0.6), npm da esa yangirog'i bor.
+//
+// MUHIM — root cause pnpm/npm METADATA KESHIda: kesh eski "latest" ni beradi.
+// Shuning uchun (1) versiya tekshiruvi keshni butunlay chetlab o'tib, to'g'ridan
+// to'g'ri registry HTTP endpointidan o'qiydi; (2) re-exec ANIQ versiya bilan
+// (hakimov@{latest}, @latest emas) qilinadi — npx shu aniq versiyani oladi,
+// kesh esa bunga ta'sir qila olmaydi.
+//
+// O'tkazib yuborish uchun: HAKIMOV_SKIP_SELF_UPDATE=1
+
+// Eng yangi versiyani registry HTTP endpointidan KESHSIZ oladi (metadata
+// keshini butunlay chetlab o'tadi). Muvaffaqiyatsiz bo'lsa null qaytaradi.
+function fetchLatestVersionViaRegistry(timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const req = https.get(
+      'https://registry.npmjs.org/hakimov/latest',
+      { headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          resolve(null);
+          return;
+        }
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data).version || null);
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve(null));
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      resolve(null);
+    });
+  });
+}
+
+// HTTP ishlamasa fallback: npm view. Muvaffaqiyatsiz bo'lsa null.
+function fetchLatestVersionViaNpm() {
+  try {
+    const out = execSync('npm view hakimov version', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+// Semver bo'yicha solishtirish (string emas): "1.0.10" > "1.0.9".
+// a > b -> musbat, a < b -> manfiy, teng -> 0.
+function compareSemver(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+async function selfUpdate() {
+  // Re-exec qilingan yangi versiyada qayta yangilanmaslik uchun (loop oldini olish).
+  if (process.env.HAKIMOV_SKIP_SELF_UPDATE) return;
+
+  // Joriy versiyani hakimovning O'Z package.json idan o'qiymiz (CWD dan emas —
+  // CWD foydalanuvchi loyihasi).
+  let current;
+  try {
+    const ownPkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+    current = ownPkg.version;
+  } catch {
+    return; // o'z versiyamizni o'qiy olmasak — jim davom etamiz
+  }
+  if (!current) return;
+
+  // Eng yangi versiyani KESHSIZ olamiz: avval registry HTTP, keyin npm view.
+  let latest = await fetchLatestVersionViaRegistry();
+  if (!latest) latest = fetchLatestVersionViaNpm();
+
+  // Tarmoq/registry muammosi nest-init ni HECH QACHON bloklamasligi kerak.
+  if (!latest) {
+    warn("Yangi versiyani tekshirib bo'lmadi (tarmoq/registry), joriy versiya bilan davom etilmoqda.");
+    return;
+  }
+
+  // Allaqachon eng yangi (yoki undan ham yangi) — jimgina davom etamiz.
+  if (compareSemver(latest, current) <= 0) return;
+
+  log(`Yangi versiya: ${colors.bold}${current} → ${latest}${colors.reset}, yangilanmoqda...`);
+
+  // ANIQ versiya bilan re-exec (kesh ta'sir qilmasligi uchun @latest EMAS).
+  const args = process.argv.slice(2);
+  try {
+    execSync(`npx -y hakimov@${latest} ${args.join(' ')}`.trim(), {
+      stdio: 'inherit',
+      env: { ...process.env, HAKIMOV_SKIP_SELF_UPDATE: '1' },
+    });
+    process.exit(0); // eski process davom etmasin
+  } catch (e) {
+    warn(`Yangilanish bajarilmadi (${e.message}), joriy versiya (${current}) bilan davom etilmoqda.`);
+  }
+}
+
 // ---------- entrypoint ----------
 
-function main() {
+async function main() {
+  // Har qanday ish boshlanmasdan oldin — eng yangi versiyaga yangilanish.
+  await selfUpdate();
+
   const command = process.argv[2];
 
   switch (command) {

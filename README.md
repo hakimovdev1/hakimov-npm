@@ -56,6 +56,18 @@ npm run start:dev
 
 Swagger UI will be available at `http://localhost:4040/api`.
 
+## Always up to date
+
+Every time you run `hakimov`, it checks npm for a newer version and, if one exists, re-runs your command with the latest release automatically — so you never get stale behavior from an old local/`npx` copy. The version check reads directly from the npm registry (bypassing the package-manager metadata cache, which is the usual cause of "stale latest"), and the re-run pins the exact newest version.
+
+To skip self-updating (e.g. in CI or offline), set:
+
+```bash
+HAKIMOV_SKIP_SELF_UPDATE=1 npx hakimov nest-init
+```
+
+A network/registry failure never blocks the command — it just continues with the current version.
+
 ## Package manager friendly
 
 The CLI auto-detects your package manager — **pnpm**, **yarn**, **bun**, or **npm** — by checking lockfiles, how it was launched (`npx`/`pnpx`/`bunx`), and what's installed on your system.
