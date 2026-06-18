@@ -4,6 +4,10 @@ package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
+mcbot/
+test/
+tgbot/
+
 # Environment & secrets
 .env
 .env.*
