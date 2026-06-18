@@ -183,6 +183,31 @@ const NEST_DEV_DEPENDENCIES = {
   'typescript-eslint': '^8.20.0',
 };
 
+// package.json ga qo'shiladigan scriptlar (mavjudlari ustun — faqat yo'qi qo'shiladi).
+const NEST_SCRIPTS = {
+  build: 'nest build',
+  format: 'prettier --write "src/**/*.ts" "test/**/*.ts"',
+  start: 'nest start',
+  'start:dev': 'nest start --watch',
+  'start:debug': 'nest start --debug --watch',
+  'start:prod': 'node dist/main',
+  lint: 'eslint "{src,apps,libs,test}/**/*.ts" --fix',
+  test: 'jest',
+  'test:watch': 'jest --watch',
+  'test:cov': 'jest --coverage',
+};
+
+// Install muvaffaqiyatsiz bo'lganda bir xil ogohlantirish/xato xabarini chiqaradi
+// (npm/yarn/bun va pnpm shoxlarida takrorlanmasligi uchun).
+function reportInstallFailure(pm, err) {
+  warn("Packagelarni o'rnatishda xatolik yuz berdi, lekin setup davom etadi.");
+  if (err) {
+    error(`Install xatosi: ${err.message}`);
+    if (err.stderr) error(`stderr: ${err.stderr.toString().trim()}`);
+  }
+  warn(`Keyinroq qo'lda o'rnating: ${colors.bold}${pm} install${colors.reset}`);
+}
+
 function installPackages(pkg) {
   const pm = detectPackageManager();
 
@@ -214,10 +239,7 @@ function installPackages(pkg) {
     execSync(`${pm} install`, { cwd: CWD, stdio: 'inherit' });
     success("Barcha packagelar o'rnatildi.");
   } catch (e) {
-    warn("Packagelarni o'rnatishda xatolik yuz berdi, lekin setup davom etadi.");
-    error(`Install xatosi: ${e.message}`);
-    if (e.stderr) error(`stderr: ${e.stderr.toString().trim()}`);
-    warn(`Keyinroq qo'lda o'rnating: ${colors.bold}${pm} install${colors.reset}`);
+    reportInstallFailure(pm, e);
   }
 }
 
@@ -268,12 +290,7 @@ function installWithPnpm() {
     }
   }
 
-  warn("Packagelarni o'rnatishda xatolik yuz berdi, lekin setup davom etadi.");
-  if (lastError) {
-    error(`Install xatosi: ${lastError.message}`);
-    if (lastError.stderr) error(`stderr: ${lastError.stderr.toString().trim()}`);
-  }
-  warn(`Keyinroq qo'lda o'rnating: ${colors.bold}pnpm install${colors.reset}`);
+  reportInstallFailure('pnpm', lastError);
 }
 
 function writeFileSafe(relativePath, content) {
@@ -438,18 +455,263 @@ export class AppService {
   writeFileIfMissing(path.join('src', 'app.service.ts'), appServiceTs);
 }
 
-const NEST_SCRIPTS = {
-  build: 'nest build',
-  format: 'prettier --write "src/**/*.ts" "test/**/*.ts"',
-  start: 'nest start',
-  'start:dev': 'nest start --watch',
-  'start:debug': 'nest start --debug --watch',
-  'start:prod': 'node dist/main',
-  lint: 'eslint "{src,apps,libs,test}/**/*.ts" --fix',
-  test: 'jest',
-  'test:watch': 'jest --watch',
-  'test:cov': 'jest --coverage',
-};
+// ---------- ts merge (ts-morph) ----------
+//
+// app.module.ts va main.ts mavjud bo'lganda ularni QAYTA YOZMAYMIZ, balki
+// faqat yetishmayotgan qismni qo'shamiz. Parse AST asosida (ts-morph) — regex
+// formatlash/qo'shtirnoq/izoh farqlarida sinishi mumkin. Faylni faqat ishonch
+// bilan parse qila olganimizda o'zgartiramiz; aks holda warn chiqarib tegmaymiz.
+
+// ts-morph ni lazy yuklaymiz. Yuklanmasa (masalan o'rnatilmagan) null qaytadi —
+// bunday holatda faylga TEGMAYMIZ (buzilgandan ko'ra tegmaslik yaxshiroq).
+function loadTsMorph() {
+  try {
+    return require('ts-morph');
+  } catch (e) {
+    warn(`ts-morph yuklanmadi (${e.message}); .ts fayllar merge qilinmaydi.`);
+    return null;
+  }
+}
+
+// Mavjud import deklaratsiyasiga yetishmayotgan named importlarni idempotent
+// qo'shadi (dublikat yaratmaydi). Import butunlay yo'q bo'lsa — yangi qo'shadi.
+function ensureNamedImports(sourceFile, moduleSpecifier, names) {
+  const decl = sourceFile.getImportDeclaration(
+    (d) => d.getModuleSpecifierValue() === moduleSpecifier
+  );
+  if (!decl) {
+    sourceFile.addImportDeclaration({ moduleSpecifier, namedImports: names });
+    return;
+  }
+  const existing = decl.getNamedImports().map((n) => n.getName());
+  for (const name of names) {
+    if (!existing.includes(name)) decl.addNamedImport(name);
+  }
+}
+
+// ts-morph parse boilerplate'i bir joyda: faylni o'qiydi, in-memory Project
+// quradi (single-quote uslubida) va fn(sf, tsm) ni chaqiradi. fn true qaytarsa
+// fayl qayta yoziladi, false/undefined qaytarsa tegilmaydi. ts-morph yo'q bo'lsa
+// yoki parse/manipulyatsiya xato bersa — warn chiqarib, faylga TEGMAYMIZ.
+function withSourceFile(rel, fn) {
+  const fullPath = path.join(CWD, rel);
+  const tsm = loadTsMorph();
+  if (!tsm) {
+    warn(`${rel}: ts-morph yo'q, o'zgartirilmadi.`);
+    return;
+  }
+  try {
+    const project = new tsm.Project({
+      useInMemoryFileSystem: true,
+      // Qo'shiladigan importlar mavjud kod uslubiga (single quote) mos bo'lsin.
+      manipulationSettings: { quoteKind: tsm.QuoteKind.Single },
+    });
+    const sf = project.createSourceFile(rel, fs.readFileSync(fullPath, 'utf8'));
+    if (fn(sf, tsm)) {
+      fs.writeFileSync(fullPath, sf.getFullText(), 'utf8');
+    }
+  } catch (e) {
+    warn(`${rel}: parse qilib bo'lmadi (${e.message}), o'zgartirilmadi.`);
+  }
+}
+
+// --- Single source of truth: quyidagi bloklar HAM to'liq shablonda (fayl yo'q
+// bo'lganda), HAM mavjud faylga additiv qo'shishda ishlatiladi. Shu sababli
+// nusxalar hech qachon bir-biridan ajralib ketmaydi.
+
+// @Module imports massivига qo'shiladigan TypeOrm bloki (env asosidagi postgres).
+function buildTypeOrmBlock() {
+  return `TypeOrmModule.forRoot({
+      type: 'postgres',
+      database: process.env.DB_DATABASE,
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT),
+      username: process.env.DB_USERNAME,
+      password: process.env.DB_PASSWORD,
+      autoLoadEntities: true,
+      synchronize: true,
+    })`;
+}
+
+// @Module imports massiviga qo'shiladigan ConfigModule bloki.
+function buildConfigBlock() {
+  return `ConfigModule.forRoot({
+      envFilePath: '.env',
+      isGlobal: true,
+    })`;
+}
+
+// bootstrap() ichiga, app.listen(...) dan oldin qo'shiladigan Swagger bloki.
+// appVar — NestFactory.create natijasi saqlangan o'zgaruvchi nomi.
+function buildSwaggerBlock(appVar, projectName, title) {
+  return `const config = new DocumentBuilder()
+    .setTitle('${title} example')
+    .setDescription('The ${projectName} API description')
+    .setVersion('1.0')
+    .addTag('${projectName}')
+    .build();
+  const documentFactory = () => SwaggerModule.createDocument(${appVar}, config);
+  SwaggerModule.setup('api', ${appVar}, documentFactory);
+`;
+}
+
+// To'liq (fayl yo'q bo'lganda yoziladigan) main.ts shabloni — Swagger bloki
+// buildSwaggerBlock('app', ...) dan quriladi (dublikat yo'q).
+function buildMainTs(projectName, title) {
+  return `import { NestFactory } from '@nestjs/core';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  ${buildSwaggerBlock('app', projectName, title)}
+  await app.listen(process.env.PORT ?? 4040);
+}
+bootstrap();
+`;
+}
+
+// To'liq (fayl yo'q bo'lganda yoziladigan) app.module.ts shabloni — TypeOrm/Config
+// bloklari buildTypeOrmBlock()/buildConfigBlock() dan quriladi (dublikat yo'q).
+function buildAppModuleTs() {
+  return `import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule } from '@nestjs/config';
+
+@Module({
+  imports: [
+    ${buildTypeOrmBlock()},
+    ${buildConfigBlock()},
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule { }
+`;
+}
+
+// src/app.module.ts: yo'q bo'lsa yaratadi, bor bo'lsa TypeOrmModule/ConfigModule
+// dan yetishmayotganini @Module imports massiviga additiv qo'shadi.
+function ensureAppModule() {
+  const rel = path.join('src', 'app.module.ts');
+
+  if (!fs.existsSync(path.join(CWD, rel))) {
+    writeFileSafe(rel, buildAppModuleTs());
+    return;
+  }
+
+  withSourceFile(rel, (sf, tsm) => {
+    // @Module dekoratori bo'lgan class va uning imports massivini topamiz.
+    let importsArray = null;
+    for (const cls of sf.getClasses()) {
+      const dec = cls.getDecorator('Module');
+      if (!dec) continue;
+      const arg = dec.getArguments()[0];
+      if (!arg || arg.getKind() !== tsm.SyntaxKind.ObjectLiteralExpression) continue;
+      const importsProp = arg.getProperty('imports');
+      if (!importsProp || typeof importsProp.getInitializer !== 'function') continue;
+      const init = importsProp.getInitializer();
+      if (init && init.getKind() === tsm.SyntaxKind.ArrayLiteralExpression) {
+        importsArray = init;
+        break;
+      }
+    }
+
+    if (!importsArray) {
+      warn(`${rel}: @Module imports massivi topilmadi, o'zgartirilmadi.`);
+      warn('TypeOrmModule va ConfigModule ni qo\'lda qo\'shing.');
+      return false;
+    }
+
+    const importsText = importsArray.getText();
+    const hasTypeOrm = importsText.includes('TypeOrmModule');
+    const hasConfig = importsText.includes('ConfigModule');
+
+    if (hasTypeOrm && hasConfig) {
+      success(`${rel}: TypeOrmModule va ConfigModule allaqachon sozlangan, o'tkazib yuborildi.`);
+      return false;
+    }
+
+    if (!hasTypeOrm) {
+      ensureNamedImports(sf, '@nestjs/typeorm', ['TypeOrmModule']);
+      importsArray.addElement(buildTypeOrmBlock());
+      success(`${rel}: TypeOrmModule qo'shildi.`);
+    } else {
+      log(`${rel}: TypeOrmModule allaqachon mavjud, o'tkazib yuborildi.`);
+    }
+
+    if (!hasConfig) {
+      ensureNamedImports(sf, '@nestjs/config', ['ConfigModule']);
+      importsArray.addElement(buildConfigBlock());
+      success(`${rel}: ConfigModule qo'shildi.`);
+    } else {
+      log(`${rel}: ConfigModule allaqachon mavjud, o'tkazib yuborildi.`);
+    }
+
+    return true;
+  });
+}
+
+// src/main.ts: yo'q bo'lsa yaratadi, bor bo'lsa Swagger sozlamasini bootstrap
+// ichiga, app.listen(...) dan oldin additiv qo'shadi.
+function ensureMainTs(projectName, title) {
+  const rel = path.join('src', 'main.ts');
+
+  if (!fs.existsSync(path.join(CWD, rel))) {
+    writeFileSafe(rel, buildMainTs(projectName, title));
+    return;
+  }
+
+  withSourceFile(rel, (sf, tsm) => {
+    // Swagger allaqachon sozlanganmi? import + SwaggerModule.setup( ikkalasi ham.
+    const hasSwaggerImport = !!sf.getImportDeclaration(
+      (d) => d.getModuleSpecifierValue() === '@nestjs/swagger'
+    );
+    const hasSwaggerSetup = sf.getFullText().includes('SwaggerModule.setup(');
+    if (hasSwaggerImport && hasSwaggerSetup) {
+      success(`${rel}: Swagger allaqachon sozlangan, o'tkazib yuborildi.`);
+      return false;
+    }
+
+    // NestFactory.create(...) chaqiruvidan app o'zgaruvchi nomini aniqlaymiz.
+    const createCall = sf
+      .getDescendantsOfKind(tsm.SyntaxKind.CallExpression)
+      .find((c) => c.getExpression().getText() === 'NestFactory.create');
+    if (!createCall) {
+      warn(`${rel}: NestFactory.create topilmadi, o'zgartirilmadi.`);
+      return false;
+    }
+
+    const varDecl = createCall.getFirstAncestorByKind(tsm.SyntaxKind.VariableDeclaration);
+    const appVar = varDecl ? varDecl.getName() : 'app';
+
+    // app.listen(...) statementini topamiz va undan oldin Swagger blokini qo'yamiz.
+    const listenCall = sf
+      .getDescendantsOfKind(tsm.SyntaxKind.CallExpression)
+      .find((c) => c.getExpression().getText() === `${appVar}.listen`);
+    if (!listenCall) {
+      warn(`${rel}: ${appVar}.listen topilmadi, o'zgartirilmadi.`);
+      return false;
+    }
+
+    const listenStmt = listenCall.getFirstAncestorByKind(tsm.SyntaxKind.ExpressionStatement);
+    const block = listenStmt && listenStmt.getParentIfKind(tsm.SyntaxKind.Block);
+    if (!listenStmt || !block) {
+      warn(`${rel}: bootstrap tuzilishi tushunarsiz, o'zgartirilmadi.`);
+      return false;
+    }
+
+    const index = block.getStatements().indexOf(listenStmt);
+    block.insertStatements(index, buildSwaggerBlock(appVar, projectName, title));
+    ensureNamedImports(sf, '@nestjs/swagger', ['SwaggerModule', 'DocumentBuilder']);
+
+    success(`${rel}: Swagger sozlamasi qo'shildi.`);
+    return true;
+  });
+}
 
 // ---------- nest-init ----------
 
@@ -463,60 +725,11 @@ function nestInit() {
   // 1. Kerakli packagelarni o'rnatish
   installPackages(pkg);
 
-  // 2. src/main.ts
-  const mainTs = `import { NestFactory } from '@nestjs/core';
-import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import { AppModule } from './app.module';
+  // 2. src/main.ts — yarat yoki Swagger'ni additiv qo'sh (mavjud kodni buzmasdan)
+  ensureMainTs(projectName, title);
 
-async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-
-  const config = new DocumentBuilder()
-    .setTitle('${title} example')
-    .setDescription('The ${projectName} API description')
-    .setVersion('1.0')
-    .addTag('${projectName}')
-    .build();
-  const documentFactory = () => SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, documentFactory);
-
-  await app.listen(process.env.PORT ?? 4040);
-}
-bootstrap();
-`;
-
-  // 3. src/app.module.ts
-  const appModuleTs = `import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConfigModule } from '@nestjs/config';
-
-@Module({
-  imports: [
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      database: process.env.DB_DATABASE,
-      host: process.env.DB_HOST,
-      port: Number(process.env.DB_PORT),
-      username: process.env.DB_USERNAME,
-      password: process.env.DB_PASSWORD,
-      autoLoadEntities: true,
-      synchronize: true
-    }),
-    ConfigModule.forRoot({
-      envFilePath: '.env',
-      isGlobal: true
-    })
-  ],
-  controllers: [AppController],
-  providers: [AppService],
-})
-export class AppModule { }
-`;
-
-  writeFileSafe(path.join('src', 'main.ts'), mainTs);
-  writeFileSafe(path.join('src', 'app.module.ts'), appModuleTs);
+  // 3. src/app.module.ts — yarat yoki TypeOrm/Config'ni additiv qo'sh
+  ensureAppModule();
 
   // TypeScript loyiha konfiguratsiyasi va AppController/AppService — bularsiz
   // IntelliSense (masalan, class-validator @IsString) ishlamaydi.
@@ -705,4 +918,10 @@ async function main() {
   }
 }
 
-main();
+// To'g'ridan-to'g'ri ishga tushirilganda CLI, require qilinganda funksiyalarni
+// eksport qiladi (test uchun). selfUpdate/install faqat CLI rejimida ishlaydi.
+if (require.main === module) {
+  main();
+} else {
+  module.exports = { ensureAppModule, ensureMainTs };
+}

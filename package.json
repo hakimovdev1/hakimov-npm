@@ -1,6 +1,6 @@
 {
   "name": "hakimov",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "You can do what long line of codes with one line of code with this package",
   "keywords": [
     "wds",
@@ -26,5 +26,14 @@
   "main": "index.js",
   "bin": {
     "hakimov": "./index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ts-morph": "^25.0.1"
   }
 }
